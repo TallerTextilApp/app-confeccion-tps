@@ -1,15 +1,23 @@
 import streamlit as st
 import pandas as pd
+import requests # <-- Nueva librería para enviar datos
+from datetime import datetime # <-- Para registrar la hora exacta
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Sistema TPS - Confección", layout="wide")
 
-# 1. PEGA TU ENLACE AQUÍ ADENTRO
-url_original = "https://docs.google.com/spreadsheets/d/1JxwvTCr-a0W5wt-Pd2lj19ViefsFf1V2NKu5cif_2vE/edit?usp=sharing"
+# ==========================================
+# 1. TUS LLAVES DE CONEXIÓN (PEGA TUS ENLACES AQUÍ)
+# ==========================================
+# Llave de LECTURA (El enlace de tu Google Sheet que ya tenías)
+url_lectura = "Phttps://docs.google.com/spreadsheets/d/1JxwvTCr-a0W5wt-Pd2lj19ViefsFf1V2NKu5cif_2vE/edit?usp=sharing"
+
+# Llave de ESCRITURA (La URL de Apps Script que acabas de copiar)
+url_escritura = "https://script.google.com/macros/s/AKfycbwgA21rNvO0DxNXtDKnAxcN4ux0IETNaAWwe0YR7SO-eKE0VP-S9nF_7RMX3Nu6vW--/exec"
 
 @st.cache_data(ttl=60)
 def cargar_datos(hoja):
-    sheet_id = url_original.split("/d/")[1].split("/")[0]
+    sheet_id = url_lectura.split("/d/")[1].split("/")[0]
     csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={hoja}"
     return pd.read_csv(csv_url)
 
@@ -55,9 +63,7 @@ try:
         st.metric("Ausentismo Diario", f"{ausentismo_pct:.1f}%", delta="Límite: 5%", delta_color="inverse")
     with col_alerta:
         if ausentismo_pct > 5:
-            st.error("⚠️️ ALERTA: Ausentismo > 5%. Requiere rebalanceo (ILUO).")
-            with st.expander("Ver Matriz ILUO"):
-                st.dataframe(df_personal[df_personal['Estado_Asistencia'].str.lower() == 'presente'], hide_index=True)
+            st.error("⚠ ALERTA: Ausentismo > 5%. Requiere rebalanceo (ILUO).")
         else:
             st.success("✅ Plantilla Estable.")
 
@@ -88,18 +94,40 @@ try:
     with tabs[4]: renderizar_linea("Empaque", "📦")
 
     # ==========================================
-    # MÓDULO 6 - ANDON LOG
+    # MÓDULO 6 - ANDON LOG (AHORA CON ESCRITURA REAL)
     # ==========================================
     st.markdown("---")
     st.subheader("🛑 Módulo 6: Registro de Paradas (Andon Log)")
     col_causa, col_tiempo, col_linea, col_btn = st.columns([2, 1, 1, 1])
-    with col_causa: causa = st.selectbox("Clasificación de Causa", ["1. Falla de Equipos", "2. Falta de Materiales", "3. Defecto de Calidad", "4. Falta de Energía", "5. Ausentismo"])
+    
+    with col_causa: causa = st.selectbox("Clasificación de Causa", ["Falla de Equipos", "Falta de Materiales", "Defecto de Calidad", "Falta de Energía", "Ausentismo"])
     with col_tiempo: tiempo = st.number_input("Tiempo Perdido (Min)", min_value=1)
     with col_linea: linea = st.selectbox("Proceso", ["Corte", "Previos", "Chamarras", "Pantalones", "Empaque"])
     with col_btn:
         st.markdown("<br>", unsafe_allow_html=True)
+        # AL HACER CLIC EN EL BOTÓN:
         if st.button("Registrar Parada", type="primary"):
-            st.warning(f"⚠️ Parada de {tiempo} min por '{causa}' registrada en {linea}.")
+            with st.spinner("Enviando a Google Sheets..."):
+                # Capturamos la fecha y hora actual
+                fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M")
+                
+                # Preparamos el paquete de datos para la hoja "Matriz_Kaizen"
+                paquete_datos = {
+                    "hoja": "Matriz_Kaizen",
+                    "datos": [fecha_actual, linea, causa, tiempo, "Pendiente"]
+                }
+                
+                try:
+                    # Disparamos los datos hacia la URL de Apps Script
+                    respuesta = requests.post(url_escritura, json=paquete_datos)
+                    if respuesta.status_code == 200:
+                        st.success(f"✅ ¡Parada registrada en la base de datos!")
+                        # Limpiamos la caché para que se actualice la tabla de abajo
+                        st.cache_data.clear()
+                    else:
+                        st.error("Error al comunicarse con la base de datos.")
+                except Exception as e:
+                    st.error(f"Falla de conexión: {e}")
 
     # ==========================================
     # VISTAS NIVEL 2 y 3 (Almacén y Gerencia)
@@ -110,21 +138,11 @@ try:
         def color_kanban(val): return 'background-color: #f8d7da' if val <= 40 else ('background-color: #fff3cd' if val <= 60 else 'background-color: #d4edda')
         st.dataframe(df_stock.style.map(color_kanban, subset=['Cantidad_Disponible']), use_container_width=True, hide_index=True)
 
-        st.markdown("### ⚙️ Módulo 5: Proyección de Consumo (Explosión BOM)")
-        plan_activo = df_plan[df_plan['Meta_Hora'] > 0]
-        explosion = pd.merge(plan_activo, df_bom, on="Codigo_Prenda", how="inner")
-        explosion["Consumo_Total"] = explosion["Meta_Hora"] * explosion["Consumo_Estandar"]
-        resumen_bom = explosion.groupby(["Codigo_Insumo", "Descripcion_Insumo", "Unidad_Medida"])["Consumo_Total"].sum().reset_index()
-        st.dataframe(resumen_bom, use_container_width=True, hide_index=True)
-
         st.markdown("---")
         st.subheader("🚨 Módulo 7: Panel de Alertas Kaizen (Resolución TBP)")
         def color_kaizen(val): return 'background-color: #d4edda; color: #155724' if val == 'Ejecutada' else 'background-color: #f8d7da; color: #721c24'
         st.dataframe(df_kaizen.style.map(color_kaizen, subset=['Estado_Definitiva']), use_container_width=True, hide_index=True)
 
-    # ==========================================
-    # VISUALIZACIÓN NIVEL 3 (Solo Gerencia)
-    # ==========================================
     if "Nivel 3" in rol:
         st.markdown("---")
         st.subheader("📅 Plan Maestro de Producción (Heijunka)")
@@ -134,22 +152,16 @@ try:
         st.subheader("📈 Análisis de Planta Semanal (Kaizen / PDCA)")
         
         col_graf1, col_graf2 = st.columns(2)
-        
         with col_graf1:
             st.write("**Desempeño de Producción Acumulada Semanal**")
-            
-            # CORRECCIÓN: Días enumerados para forzar el orden cronológico en el gráfico
             datos_historico = pd.DataFrame({
                 "Día": ["1-Lun", "2-Mar", "3-Mie", "4-Jue", "5-Vie"],
                 "Producción Diaria": [420, 480, 510, 460, 500],
                 "Meta Diaria": [500, 500, 500, 500, 500]
             })
-            
             datos_historico["Real Acumulado"] = datos_historico["Producción Diaria"].cumsum()
             datos_historico["Meta Acumulada"] = datos_historico["Meta Diaria"].cumsum()
-            
-            grafico_tendencia = datos_historico[["Día", "Real Acumulado", "Meta Acumulada"]].set_index("Día")
-            st.line_chart(grafico_tendencia, color=["#1F4E78", "#FF4B4B"])
+            st.line_chart(datos_historico[["Día", "Real Acumulado", "Meta Acumulada"]].set_index("Día"), color=["#1F4E78", "#FF4B4B"])
             
         with col_graf2:
             st.write("**Pareto de Tiempo Perdido por Causa Raíz (Minutos)**")
@@ -160,5 +172,5 @@ try:
             st.bar_chart(datos_pareto.set_index("Causa_Raiz"), color="#1F4E78")
 
 except Exception as e:
-    st.error("❌ Error de conexión. Revisa el enlace.")
+    st.error("❌ Error de lectura. Revisa el enlace de Google Sheets.")
     st.write(e)
