@@ -20,6 +20,7 @@ try:
     df_plan = cargar_datos("Plan_Diario")
     df_stock = cargar_datos("Stock_Inicial")
     df_maestro = cargar_datos("Plan_Maestro_Produccion")
+    df_kaizen = cargar_datos("Matriz_Kaizen") # <-- Nueva base de datos Kaizen
     
     # --- MENÚ LATERAL (RBAC) ---
     st.sidebar.header("👤 Panel de Usuario")
@@ -30,7 +31,7 @@ try:
     ])
     
     # ==========================================
-    # FUNCIÓN REUTILIZABLE PARA PITCH CHARTS (Evita repetir código)
+    # FUNCIÓN REUTILIZABLE PARA PITCH CHARTS 
     # ==========================================
     def renderizar_linea(nombre_proceso, icono):
         st.markdown(f"### {icono} Línea de {nombre_proceso}")
@@ -66,17 +67,43 @@ try:
     with tabs[3]: renderizar_linea("Pantalones", "👖")
     with tabs[4]: renderizar_linea("Empaque", "📦")
 
+    # --- NUEVO: MÓDULO 6 - ANDON LOG (Visible para todos) ---
+    st.markdown("---")
+    st.subheader("🛑 Módulo 6: Registro de Paradas (Andon Log)")
+    st.write("Si activó una alerta en el Pitch Chart, registre la causa raíz aquí (Cero Fricción):")
+    
+    col_causa, col_tiempo, col_linea, col_btn = st.columns([2, 1, 1, 1])
+    with col_causa:
+        causa = st.selectbox("Clasificación de Causa Raíz", ["1. Falla de Equipos", "2. Falta de Materiales", "3. Defecto de Calidad", "4. Falta de Energía", "5. Ausentismo"])
+    with col_tiempo:
+        tiempo = st.number_input("Tiempo Perdido (Min)", min_value=1)
+    with col_linea:
+        linea = st.selectbox("Proceso", ["Corte", "Previos", "Chamarras", "Pantalones", "Empaque"])
+    with col_btn:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("Registrar Parada", type="primary"):
+            st.warning(f"⚠️ Parada de {tiempo} min por '{causa}' registrada en {linea}.")
+            st.info("💡 En la versión final, este botón enviará el reporte directo al Pareto y a la Matriz Kaizen.")
+
     # --- VISUALIZACIÓN NIVEL 2 y 3 (Almacén y Gerencia) ---
     if "Nivel 2" in rol or "Nivel 3" in rol:
         st.markdown("---")
         st.subheader("🛒 Módulo de Almacén (Suministro Mizusumashi)")
-        st.write("Control de Inventario y Alertas Kanban:")
         
-        # Lógica de colores Kanban
         def color_kanban(val):
             return 'background-color: #f8d7da' if val <= 40 else ('background-color: #fff3cd' if val <= 60 else 'background-color: #d4edda')
         
         st.dataframe(df_stock.style.map(color_kanban, subset=['Cantidad_Disponible']), use_container_width=True, hide_index=True)
+
+        # --- NUEVO: MÓDULO 7 - MATRIZ KAIZEN (Niveles 2 y 3) ---
+        st.markdown("---")
+        st.subheader("🚨 Módulo 7: Panel de Alertas Kaizen (Resolución TBP)")
+        st.info("Regla Operativa: Máximo 3 días hábiles para definir la Contramedida Definitiva y Fecha de Ejecución.")
+        
+        def color_kaizen(val):
+            return 'background-color: #d4edda; color: #155724' if val == 'Ejecutada' else 'background-color: #f8d7da; color: #721c24'
+            
+        st.dataframe(df_kaizen.style.map(color_kaizen, subset=['Estado_Definitiva']), use_container_width=True, hide_index=True)
 
     # --- VISUALIZACIÓN NIVEL 3 (Solo Gerencia) ---
     if "Nivel 3" in rol:
