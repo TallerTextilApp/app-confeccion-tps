@@ -1,22 +1,25 @@
 import streamlit as st
-from streamlit_gsheets import GSheetsConnection
+import pandas as pd
 
-st.title("🏭 Tablero de Control de Planta (Prueba Directa)")
+st.title("🏭 Tablero de Control de Planta (Conexión Definitiva)")
 
 # 1. PEGA TU ENLACE AQUÍ ADENTRO (Mantén las comillas "")
-url_google_sheet = "https://docs.google.com/spreadsheets/d/1JxwvTCr-a0W5wt-Pd2lj19ViefsFf1V2NKu5cif_2vE/edit?usp=sharing"
-
-# 2. Conectamos directamente saltando el archivo de Secretos
-conn = st.connection("gsheets", type=GSheetsConnection)
+url_original = "https://docs.google.com/spreadsheets/d/1JxwvTCr-a0W5wt-Pd2lj19ViefsFf1V2NKu5cif_2vE/edit?usp=sharing"
 
 try:
-    # 3. Forzamos a no usar la memoria (ttl=0) para evitar que se quede pegado
-    df_stock = conn.read(spreadsheet=url_google_sheet, worksheet="Stock_Inicial", ttl=0)
+    # 2. El sistema extrae el ID puro de tu enlace (eliminando basura del link)
+    sheet_id = url_original.split("/d/")[1].split("/")[0]
     
-    st.success("✅ ¡CONEXIÓN DIRECTA EXITOSA! El problema eran los secretos.")
-    st.write("Aquí están tus datos del almacén:")
+    # 3. Construimos un puente directo a la hoja "Stock_Inicial"
+    csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet=Stock_Inicial"
+    
+    # 4. Leemos los datos directamente sin librerías intermedias (Cero Fricción)
+    df_stock = pd.read_csv(csv_url)
+    
+    st.success("✅ ¡SISTEMA CONECTADO! La base de datos está en línea.")
+    st.write("Datos del almacén en tiempo real:")
     st.dataframe(df_stock)
     
 except Exception as e:
-    st.error("❌ Sigue fallando. El error exacto es:")
+    st.error("❌ Falla de lectura. Revisa el enlace.")
     st.write(e)
