@@ -76,7 +76,7 @@ try:
         def color_kanban(val):
             return 'background-color: #f8d7da' if val <= 40 else ('background-color: #fff3cd' if val <= 60 else 'background-color: #d4edda')
         
-        st.dataframe(df_stock.style.applymap(color_kanban, subset=['Cantidad_Disponible']), use_container_width=True, hide_index=True)
+        st.dataframe(df_stock.style.map(color_kanban, subset=['Cantidad_Disponible']), use_container_width=True, hide_index=True)
 
     # --- VISUALIZACIÓN NIVEL 3 (Solo Gerencia) ---
     if "Nivel 3" in rol:
