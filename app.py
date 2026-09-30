@@ -55,7 +55,7 @@ try:
         st.metric("Ausentismo Diario", f"{ausentismo_pct:.1f}%", delta="Límite: 5%", delta_color="inverse")
     with col_alerta:
         if ausentismo_pct > 5:
-            st.error("⚠️ ALERTA: Ausentismo > 5%. Requiere rebalanceo (ILUO).")
+            st.error("⚠️️ ALERTA: Ausentismo > 5%. Requiere rebalanceo (ILUO).")
             with st.expander("Ver Matriz ILUO"):
                 st.dataframe(df_personal[df_personal['Estado_Asistencia'].str.lower() == 'presente'], hide_index=True)
         else:
@@ -138,21 +138,17 @@ try:
         with col_graf1:
             st.write("**Desempeño de Producción Acumulada Semanal**")
             
-            # Datos base simulados del esfuerzo diario
+            # CORRECCIÓN: Días enumerados para forzar el orden cronológico en el gráfico
             datos_historico = pd.DataFrame({
-                "Día": ["Lun", "Mar", "Mie", "Jue", "Vie"],
+                "Día": ["1-Lun", "2-Mar", "3-Mie", "4-Jue", "5-Vie"],
                 "Producción Diaria": [420, 480, 510, 460, 500],
                 "Meta Diaria": [500, 500, 500, 500, 500]
             })
             
-            # MAGIA MATEMÁTICA: .cumsum() suma el día actual con el anterior de forma progresiva
             datos_historico["Real Acumulado"] = datos_historico["Producción Diaria"].cumsum()
             datos_historico["Meta Acumulada"] = datos_historico["Meta Diaria"].cumsum()
             
-            # Filtramos para graficar solo las columnas de progreso acumulado
             grafico_tendencia = datos_historico[["Día", "Real Acumulado", "Meta Acumulada"]].set_index("Día")
-            
-            # Graficamos las líneas (Azul para Meta, Rojo para Realidad)
             st.line_chart(grafico_tendencia, color=["#1F4E78", "#FF4B4B"])
             
         with col_graf2:
