@@ -1,29 +1,27 @@
 import streamlit as st
 import pandas as pd
 
-# --- CONFIGURACIÓN DE PÁGINA (Mieruka Visual) ---
+# --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Sistema TPS - Confección", layout="wide")
 
 # 1. PEGA TU ENLACE AQUÍ ADENTRO
 url_original = "https://docs.google.com/spreadsheets/d/1JxwvTCr-a0W5wt-Pd2lj19ViefsFf1V2NKu5cif_2vE/edit?usp=sharing"
 
-# 2. FUNCIÓN MAESTRA PARA LEER CUALQUIER PESTAÑA (Cero Fricción)
-@st.cache_data(ttl=60) # Actualiza los datos cada 60 segundos
+@st.cache_data(ttl=60)
 def cargar_datos(hoja):
     sheet_id = url_original.split("/d/")[1].split("/")[0]
     csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={hoja}"
     return pd.read_csv(csv_url)
 
-# --- ENCABEZADO PRINCIPAL ---
 st.title("🏭 Tablero de Control de Planta (TPS)")
 st.markdown("---")
 
 try:
-    # 3. CARGAMOS LAS BASES DE DATOS DESDE GOOGLE SHEETS
     df_plan = cargar_datos("Plan_Diario")
     df_stock = cargar_datos("Stock_Inicial")
+    df_maestro = cargar_datos("Plan_Maestro_Produccion")
     
-    # --- MENÚ LATERAL (RBAC - Control de Accesos) ---
+    # --- MENÚ LATERAL (RBAC) ---
     st.sidebar.header("👤 Panel de Usuario")
     rol = st.sidebar.selectbox("Seleccione su Nivel de Acceso:", [
         "Nivel 1: Línea / Gemba", 
@@ -32,46 +30,60 @@ try:
     ])
     
     # ==========================================
-    # VISTA NIVEL 1: PISO DE PLANTA (Pitch Charts Desfasados)
+    # FUNCIÓN REUTILIZABLE PARA PITCH CHARTS (Evita repetir código)
     # ==========================================
-    if "Nivel 1" in rol or "Nivel 2" in rol or "Nivel 3" in rol:
-        st.subheader("📊 Módulo 2: Tableros Hora a Hora (Pitch Chart)")
+    def renderizar_linea(nombre_proceso, icono):
+        st.markdown(f"### {icono} Línea de {nombre_proceso}")
+        df_proceso = df_plan[df_plan['Proceso'] == nombre_proceso].copy()
         
-        # Pestañas para cada línea de producción
-        tab_corte, tab_previos, tab_cham, tab_pant, tab_emp = st.tabs([
-            "✂️ Corte", "🧵 Previos", "🧥 Chamarras", "👖 Pantalones", "📦 Empaque"
-        ])
+        if not df_proceso.empty:
+            df_editado = st.data_editor(
+                df_proceso[["Hora_Inicio", "Hora_Fin", "Codigo_Prenda", "Meta_Hora", "Produccion_Real", "Parada_Activa"]],
+                column_config={"Parada_Activa": st.column_config.CheckboxColumn("¿Andon / Parada?")},
+                hide_index=True, use_container_width=True, key=f"editor_{nombre_proceso}"
+            )
+            
+            prod_total = df_editado["Produccion_Real"].sum()
+            meta_total = df_editado["Meta_Hora"].sum()
+            eficiencia = (prod_total / meta_total * 100) if meta_total > 0 else 0
+            
+            st.metric(f"Eficiencia - {nombre_proceso}", f"{eficiencia:.1f}%", 
+                      delta="Meta: 95%", delta_color="off" if eficiencia < 95 else "normal")
+        else:
+            st.info(f"No hay producción planificada para {nombre_proceso} en este turno.")
+
+    # ==========================================
+    # VISTAS SEGÚN EL NIVEL DE ACCESO
+    # ==========================================
+    
+    # --- VISUALIZACIÓN NIVEL 1, 2 y 3 (Todos ven la planta) ---
+    st.subheader("📊 Módulo 2: Tableros Hora a Hora (Pitch Chart)")
+    tabs = st.tabs(["✂️ Corte", "🧵 Previos", "🧥 Chamarras", "👖 Pantalones", "📦 Empaque"])
+    
+    with tabs[0]: renderizar_linea("Corte", "✂️")
+    with tabs[1]: renderizar_linea("Previos", "🧵")
+    with tabs[2]: renderizar_linea("Chamarras", "🧥")
+    with tabs[3]: renderizar_linea("Pantalones", "👖")
+    with tabs[4]: renderizar_linea("Empaque", "📦")
+
+    # --- VISUALIZACIÓN NIVEL 2 y 3 (Almacén y Gerencia) ---
+    if "Nivel 2" in rol or "Nivel 3" in rol:
+        st.markdown("---")
+        st.subheader("🛒 Módulo de Almacén (Suministro Mizusumashi)")
+        st.write("Control de Inventario y Alertas Kanban:")
         
-        # Ejemplo: Desarrollamos la pestaña de Pantalones
-        with tab_pant:
-            st.markdown("### 👖 Línea de Pantalones Tácticos")
-            
-            # Filtramos los datos de Google Sheets solo para esta línea
-            df_pantalones = df_plan[df_plan['Proceso'] == 'Pantalones'].copy()
-            
-            if not df_pantalones.empty:
-                st.write("Registre la producción (Doble clic en la celda):")
-                
-                # Editor interactivo (2 toques para el operador)
-                df_editado = st.data_editor(
-                    df_pantalones[["Hora_Inicio", "Hora_Fin", "Codigo_Prenda", "Meta_Hora", "Produccion_Real", "Parada_Activa"]],
-                    column_config={
-                        "Parada_Activa": st.column_config.CheckboxColumn("¿Andon / Parada?")
-                    },
-                    hide_index=True,
-                    use_container_width=True
-                )
-                
-                # Motor de Eficiencia (Módulo 3) - Cálculo Automático
-                prod_total = df_editado["Produccion_Real"].sum()
-                meta_total = df_editado["Meta_Hora"].sum()
-                eficiencia = (prod_total / meta_total * 100) if meta_total > 0 else 0
-                
-                st.metric("Eficiencia Acumulada del Turno", f"{eficiencia:.1f}%", 
-                          delta="Meta: 95%", delta_color="off" if eficiencia < 95 else "normal")
-            else:
-                st.info("No hay plan de producción cargado para Pantalones en este turno.")
-                
+        # Lógica de colores Kanban
+        def color_kanban(val):
+            return 'background-color: #f8d7da' if val <= 40 else ('background-color: #fff3cd' if val <= 60 else 'background-color: #d4edda')
+        
+        st.dataframe(df_stock.style.applymap(color_kanban, subset=['Cantidad_Disponible']), use_container_width=True, hide_index=True)
+
+    # --- VISUALIZACIÓN NIVEL 3 (Solo Gerencia) ---
+    if "Nivel 3" in rol:
+        st.markdown("---")
+        st.subheader("📅 Plan Maestro de Producción (Heijunka)")
+        st.dataframe(df_maestro, use_container_width=True, hide_index=True)
+
 except Exception as e:
     st.error("❌ Error de conexión. Revisa el enlace.")
     st.write(e)
