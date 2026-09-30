@@ -17,13 +17,13 @@ st.title("🏭 Tablero de Control de Planta (TPS)")
 st.markdown("---")
 
 try:
-    # 2. CARGAMOS TODAS LAS BASES DE DATOS (Incluyendo BOM)
+    # 2. CARGAMOS TODAS LAS BASES DE DATOS
     df_plan = cargar_datos("Plan_Diario")
     df_stock = cargar_datos("Stock_Inicial")
     df_maestro = cargar_datos("Plan_Maestro_Produccion")
     df_kaizen = cargar_datos("Matriz_Kaizen")
     df_personal = cargar_datos("Matriz_Personal")
-    df_bom = cargar_datos("BOM_Insumos") # <-- NUEVA CONEXIÓN MÓDULO 5
+    df_bom = cargar_datos("BOM_Insumos")
     
     # --- MENÚ LATERAL (RBAC) ---
     st.sidebar.header("👤 Panel de Usuario")
@@ -34,7 +34,7 @@ try:
     ])
 
     # ==========================================
-    # MÓDULOS 3 Y 4 - INDICADORES GLOBALES Y AUSENTISMO
+    # MÓDULOS 3 Y 4 - INDICADORES GLOBALES (ACTUALIZADO CON PRODUCCIÓN)
     # ==========================================
     st.subheader("🌐 Indicadores Globales de Planta (Turno Actual)")
     
@@ -46,15 +46,19 @@ try:
     meta_total_global = df_plan["Meta_Hora"].sum()
     eficiencia_global = (prod_total_global / meta_total_global * 100) if meta_total_global > 0 else 0
 
-    col_efi, col_aus, col_alerta = st.columns(3)
+    # Expandimos a 4 columnas para incluir la Producción Física
+    col_prod, col_efi, col_aus, col_alerta = st.columns(4)
+    with col_prod:
+        # Nuevo Medidor de Producción Acumulada Diaria
+        st.metric("Producción Acumulada", f"{int(prod_total_global)} unid", delta=f"Meta: {int(meta_total_global)} unid", delta_color="off" if prod_total_global < meta_total_global else "normal")
     with col_efi:
-        st.metric("Eficiencia Global de Planta", f"{eficiencia_global:.1f}%", delta="Meta: 95%", delta_color="off" if eficiencia_global < 95 else "normal")
+        st.metric("Eficiencia Global", f"{eficiencia_global:.1f}%", delta="Meta: 95%", delta_color="off" if eficiencia_global < 95 else "normal")
     with col_aus:
-        st.metric("Ausentismo Diario", f"{ausentismo_pct:.1f}%", delta="Límite TPS: 5%", delta_color="inverse")
+        st.metric("Ausentismo Diario", f"{ausentismo_pct:.1f}%", delta="Límite: 5%", delta_color="inverse")
     with col_alerta:
         if ausentismo_pct > 5:
             st.error("⚠️ ALERTA: Ausentismo > 5%. Requiere rebalanceo (ILUO).")
-            with st.expander("Ver Personal Disponible"):
+            with st.expander("Ver Matriz ILUO"):
                 st.dataframe(df_personal[df_personal['Estado_Asistencia'].str.lower() == 'presente'], hide_index=True)
         else:
             st.success("✅ Plantilla Estable.")
@@ -91,7 +95,7 @@ try:
     st.markdown("---")
     st.subheader("🛑 Módulo 6: Registro de Paradas (Andon Log)")
     col_causa, col_tiempo, col_linea, col_btn = st.columns([2, 1, 1, 1])
-    with col_causa: causa = st.selectbox("Clasificación de Causa Raíz", ["1. Falla de Equipos", "2. Falta de Materiales", "3. Defecto de Calidad", "4. Falta de Energía", "5. Ausentismo"])
+    with col_causa: causa = st.selectbox("Clasificación de Causa", ["1. Falla de Equipos", "2. Falta de Materiales", "3. Defecto de Calidad", "4. Falta de Energía", "5. Ausentismo"])
     with col_tiempo: tiempo = st.number_input("Tiempo Perdido (Min)", min_value=1)
     with col_linea: linea = st.selectbox("Proceso", ["Corte", "Previos", "Chamarras", "Pantalones", "Empaque"])
     with col_btn:
@@ -104,20 +108,14 @@ try:
     # ==========================================
     if "Nivel 2" in rol or "Nivel 3" in rol:
         st.markdown("---")
-        st.subheader("🛒 Módulo de Almacén y Stock Kanban")
+        st.subheader("🛒 Módulo de Almacén y Suministro")
         def color_kanban(val): return 'background-color: #f8d7da' if val <= 40 else ('background-color: #fff3cd' if val <= 60 else 'background-color: #d4edda')
         st.dataframe(df_stock.style.map(color_kanban, subset=['Cantidad_Disponible']), use_container_width=True, hide_index=True)
 
-        # --- NUEVO: MÓDULO 5 (Explosión BOM / Backflushing) ---
         st.markdown("### ⚙️ Módulo 5: Proyección de Consumo (Explosión BOM)")
-        st.write("Materiales requeridos en piso de planta para cumplir la meta de hoy:")
-        
-        # Cruzamos el plan diario con la receta (BOM) usando pandas
         plan_activo = df_plan[df_plan['Meta_Hora'] > 0]
         explosion = pd.merge(plan_activo, df_bom, on="Codigo_Prenda", how="inner")
         explosion["Consumo_Total"] = explosion["Meta_Hora"] * explosion["Consumo_Estandar"]
-        
-        # Agrupamos por insumo para darle la lista final al almacenista
         resumen_bom = explosion.groupby(["Codigo_Insumo", "Descripcion_Insumo", "Unidad_Medida"])["Consumo_Total"].sum().reset_index()
         st.dataframe(resumen_bom, use_container_width=True, hide_index=True)
 
@@ -134,18 +132,29 @@ try:
         st.subheader("📅 Plan Maestro de Producción (Heijunka)")
         st.dataframe(df_maestro, use_container_width=True, hide_index=True)
         
-        # --- NUEVO: MÓDULO 7 (Gráficos Pareto) ---
         st.markdown("---")
-        st.subheader("📈 Análisis de Planta (Pareto de Tiempo Perdido)")
-        st.write("Identificación visual de las principales causas de paradas (Acumulado Semanal):")
+        st.subheader("📈 Análisis de Planta Semanal (Kaizen / PDCA)")
         
-        # Datos simulados para demostrar la visualización Mieruka
-        datos_pareto = pd.DataFrame({
-            "Causa_Raiz": ["Falla de Equipos", "Falta de Materiales", "Ausentismo", "Defecto Calidad", "Falta Energía"],
-            "Minutos_Perdidos": [120, 85, 45, 30, 10]
-        })
+        # NUEVO: Gráficos lado a lado (Producción Acumulada vs Paradas)
+        col_graf1, col_graf2 = st.columns(2)
         
-        st.bar_chart(datos_pareto.set_index("Causa_Raiz"), color="#1F4E78")
+        with col_graf1:
+            st.write("**Producción Acumulada vs Meta (Histórico Semanal)**")
+            # Datos simulados para demostrar la visualización de tendencia
+            datos_historico = pd.DataFrame({
+                "Día": ["Lun", "Mar", "Mie", "Jue", "Vie"],
+                "Producción Real": [420, 480, 510, 460, 500],
+                "Meta Diaria": [500, 500, 500, 500, 500]
+            }).set_index("Día")
+            st.line_chart(datos_historico, color=["#1F4E78", "#FF4B4B"])
+            
+        with col_graf2:
+            st.write("**Pareto de Tiempo Perdido por Causa Raíz (Minutos)**")
+            datos_pareto = pd.DataFrame({
+                "Causa_Raiz": ["Falla Equipos", "Falta Material", "Ausentismo", "Defecto Calidad", "Falta Energía"],
+                "Minutos_Perdidos": [120, 85, 45, 30, 10]
+            })
+            st.bar_chart(datos_pareto.set_index("Causa_Raiz"), color="#1F4E78")
 
 except Exception as e:
     st.error("❌ Error de conexión. Revisa el enlace.")
