@@ -34,7 +34,7 @@ try:
     ])
 
     # ==========================================
-    # MÓDULOS 3 Y 4 - INDICADORES GLOBALES (ACTUALIZADO CON PRODUCCIÓN)
+    # MÓDULOS 3 Y 4 - INDICADORES GLOBALES
     # ==========================================
     st.subheader("🌐 Indicadores Globales de Planta (Turno Actual)")
     
@@ -46,11 +46,9 @@ try:
     meta_total_global = df_plan["Meta_Hora"].sum()
     eficiencia_global = (prod_total_global / meta_total_global * 100) if meta_total_global > 0 else 0
 
-    # Expandimos a 4 columnas para incluir la Producción Física
     col_prod, col_efi, col_aus, col_alerta = st.columns(4)
     with col_prod:
-        # Nuevo Medidor de Producción Acumulada Diaria
-        st.metric("Producción Acumulada", f"{int(prod_total_global)} unid", delta=f"Meta: {int(meta_total_global)} unid", delta_color="off" if prod_total_global < meta_total_global else "normal")
+        st.metric("Producción del Turno", f"{int(prod_total_global)} unid", delta=f"Meta: {int(meta_total_global)} unid", delta_color="off" if prod_total_global < meta_total_global else "normal")
     with col_efi:
         st.metric("Eficiencia Global", f"{eficiencia_global:.1f}%", delta="Meta: 95%", delta_color="off" if eficiencia_global < 95 else "normal")
     with col_aus:
@@ -135,18 +133,27 @@ try:
         st.markdown("---")
         st.subheader("📈 Análisis de Planta Semanal (Kaizen / PDCA)")
         
-        # NUEVO: Gráficos lado a lado (Producción Acumulada vs Paradas)
         col_graf1, col_graf2 = st.columns(2)
         
         with col_graf1:
-            st.write("**Producción Acumulada vs Meta (Histórico Semanal)**")
-            # Datos simulados para demostrar la visualización de tendencia
+            st.write("**Desempeño de Producción Acumulada Semanal**")
+            
+            # Datos base simulados del esfuerzo diario
             datos_historico = pd.DataFrame({
                 "Día": ["Lun", "Mar", "Mie", "Jue", "Vie"],
-                "Producción Real": [420, 480, 510, 460, 500],
+                "Producción Diaria": [420, 480, 510, 460, 500],
                 "Meta Diaria": [500, 500, 500, 500, 500]
-            }).set_index("Día")
-            st.line_chart(datos_historico, color=["#1F4E78", "#FF4B4B"])
+            })
+            
+            # MAGIA MATEMÁTICA: .cumsum() suma el día actual con el anterior de forma progresiva
+            datos_historico["Real Acumulado"] = datos_historico["Producción Diaria"].cumsum()
+            datos_historico["Meta Acumulada"] = datos_historico["Meta Diaria"].cumsum()
+            
+            # Filtramos para graficar solo las columnas de progreso acumulado
+            grafico_tendencia = datos_historico[["Día", "Real Acumulado", "Meta Acumulada"]].set_index("Día")
+            
+            # Graficamos las líneas (Azul para Meta, Rojo para Realidad)
+            st.line_chart(grafico_tendencia, color=["#1F4E78", "#FF4B4B"])
             
         with col_graf2:
             st.write("**Pareto de Tiempo Perdido por Causa Raíz (Minutos)**")
