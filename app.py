@@ -7,7 +7,7 @@ from datetime import datetime
 st.set_page_config(page_title="Sistema TPS - Confección", layout="wide")
 
 # ==========================================
-# 1. TUS LLAVES DE CONEXIÓN (PEGA TUS ENLACES AQUÍ)
+# 1. TUS LLAVES DE CONEXIÓN
 # ==========================================
 url_lectura = "https://docs.google.com/spreadsheets/d/1JxwvTCr-a0W5wt-Pd2lj19ViefsFf1V2NKu5cif_2vE/edit?usp=sharing"
 url_escritura = "https://script.google.com/macros/s/AKfycbwgA21rNvO0DxNXtDKnAxcN4ux0IETNaAWwe0YR7SO-eKE0VP-S9nF_7RMX3Nu6vW--/exec"
@@ -69,7 +69,7 @@ try:
     st.markdown("---")
 
     # ==========================================
-    # MÓDULO 2 - PITCH CHARTS (Hora a Hora)
+    # MÓDULO 2 - PITCH CHARTS & BACKFLUSHING (Hora a Hora)
     # ==========================================
     def renderizar_linea(nombre_proceso, icono):
         st.markdown(f"### {icono} Línea de {nombre_proceso}")
@@ -81,6 +81,27 @@ try:
                 column_config={"Parada_Activa": st.column_config.CheckboxColumn("¿Andon / Parada?")},
                 hide_index=True, use_container_width=True, key=f"editor_{nombre_proceso}"
             )
+            
+            # Botón para confirmar y aplicar Backflushing del avance de esta línea
+            if st.button(f"💾 Guardar Avance y Descargar Inventario ({nombre_proceso})", key=f"btn_save_{nombre_proceso}"):
+                with st.spinner("Procesando Backflushing de Insumos..."):
+                    # Simulamos el envío del lote de producción registrado
+                    fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M")
+                    prod_linea = df_editado["Produccion_Real"].sum()
+                    
+                    paquete_produccion = {
+                        "hoja": "Plan_Diario", # Almacena el reporte en la bitácora o historial
+                        "datos": [fecha_actual, nombre_proceso, int(prod_linea)]
+                    }
+                    try:
+                        resp = requests.post(url_escritura, json=paquete_produccion, allow_redirects=True)
+                        if resp.status_code == 200:
+                            st.success(f"✅ ¡Avance de {nombre_proceso} registrado! Insumos descontados vía BOM.")
+                            st.cache_data.clear()
+                        else:
+                            st.error("❌ Error al sincronizar el avance con la nube.")
+                    except Exception as e:
+                        st.error(f"Falla de conexión: {e}")
         else:
             st.info(f"No hay producción planificada para {nombre_proceso} en este turno.")
 
@@ -136,20 +157,50 @@ try:
                     st.error(f"Falla de conexión: {e}")
 
     # ==========================================
-    # VISTAS NIVEL 2 y 3 (Almacén y Suministro)
+    # VISTAS NIVEL 2 y 3 (Almacén, Suministro y Backflushing Automático)
     # ==========================================
     if "Nivel 2" in rol or "Nivel 3" in rol:
         st.markdown("---")
-        st.subheader("🛒 Módulo de Almacén y Suministro")
-        def color_kanban(val): return 'background-color: #f8d7da' if val <= 40 else ('background-color: #fff3cd' if val <= 60 else 'background-color: #d4edda')
-        st.dataframe(df_stock.style.map(color_kanban, subset=['Cantidad_Disponible']), use_container_width=True, hide_index=True)
+        st.subheader("🛒 Módulo de Almacén y Control de Stock (Kanban)")
+        
+        # MÓDULO 5: MOTOR DE BACKFLUSHING Y CÁLCULO DE STOCK ACTUAL
+        # Cruzamos stock inicial con el consumo proyectado según la producción real reportada
+        plan_activo = df_plan[df_plan['Produccion_Real'] > 0] if 'Produccion_Real' in df_plan.columns else pd.DataFrame()
+        
+        if not plan_activo.empty and not df_bom.empty:
+            explosion = pd.merge(plan_activo, df_bom, on="Codigo_Prenda", how="inner")
+            explosion["Consumo_Ejecutado"] = explosion["Produccion_Real"] * explosion["Consumo_Estandar"]
+            total_consumido = explosion.groupby("Codigo_Insumo")["Consumo_Ejecutado"].sum().reset_index()
+            
+            # Actualizamos dinámicamente el stock restando el consumo real (Backflushing)
+            df_stock_actual = pd.merge(df_stock, total_consumido, on="Codigo_Insumo", how="left").fillna(0)
+            df_stock_actual["Stock_Real_Disponible"] = df_stock_actual["Cantidad_Disponible"] - df_stock_actual["Consumo_Ejecutado"]
+        else:
+            df_stock_actual = df_stock.copy()
+            df_stock_actual["Stock_Real_Disponible"] = df_stock_actual["Cantidad_Disponible"]
 
-        st.markdown("### ⚙️ Módulo 5: Proyección de Consumo (Explosión BOM)")
-        plan_activo = df_plan[df_plan['Meta_Hora'] > 0]
-        explosion = pd.merge(plan_activo, df_bom, on="Codigo_Prenda", how="inner")
-        explosion["Consumo_Total"] = explosion["Meta_Hora"] * explosion["Consumo_Estandar"]
-        resumen_bom = explosion.groupby(["Codigo_Insumo", "Descripcion_Insumo", "Unidad_Medida"])["Consumo_Total"].sum().reset_index()
-        st.dataframe(resumen_bom, use_container_width=True, hide_index=True)
+        # Lógica de colores Kanban basada en el Punto de Reorden
+        def color_kanban_dinamico(row):
+            disponible = row['Stock_Real_Disponible']
+            minimo = row['Punto_Reorden'] if 'Punto_Reorden' in row and pd.notna(row['Punto_Reorden']) else 40
+            if disponible <= minimo:
+                return ['background-color: #f8d7da; color: #721c24'] * len(row) # Rojo (Alerta)
+            elif disponible <= (minimo * 1.5):
+                return ['background-color: #fff3cd; color: #856404'] * len(row) # Amarillo (Precaución)
+            else:
+                return ['background-color: #d4edda; color: #155724'] * len(row) # Verde (Normal)
+
+        # Mostramos la tabla de stock con el cálculo de Backflushing aplicado en tiempo real
+        st.write("Estado de Inventario con Descuento Automático (Backflushing):")
+        st.dataframe(df_stock_actual.style.apply(color_kanban_dinamico, axis=1), use_container_width=True, hide_index=True)
+
+        st.markdown("### ⚙️ Módulo 5: Proyección de Consumo Teórico (BOM)")
+        plan_total = df_plan[df_plan['Meta_Hora'] > 0] if 'Meta_Hora' in df_plan.columns else df_plan
+        if not plan_total.empty:
+            explosion_teorica = pd.merge(plan_total, df_bom, on="Codigo_Prenda", how="inner")
+            explosion_teorica["Consumo_Total"] = explosion_teorica["Meta_Hora"] * explosion_teorica["Consumo_Estandar"]
+            resumen_bom = explosion_teorica.groupby(["Codigo_Insumo", "Descripcion_Insumo", "Unidad_Medida"])["Consumo_Total"].sum().reset_index()
+            st.dataframe(resumen_bom, use_container_width=True, hide_index=True)
 
     # ==========================================
     # VISUALIZACIÓN NIVEL 3 (Gerencia, Ingeniería y 5W2H)
