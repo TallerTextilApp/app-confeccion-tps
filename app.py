@@ -1,18 +1,15 @@
 import streamlit as st
 import pandas as pd
-import requests # <-- Nueva librería para enviar datos
-from datetime import datetime # <-- Para registrar la hora exacta
+import requests
+from datetime import datetime
 
-# --- CONFIGURACIÓN DE PÁGINA ---
+# --- CONFIGURACIÓN DE PÁGINA (Mieruka Visual) ---
 st.set_page_config(page_title="Sistema TPS - Confección", layout="wide")
 
 # ==========================================
 # 1. TUS LLAVES DE CONEXIÓN (PEGA TUS ENLACES AQUÍ)
 # ==========================================
-# Llave de LECTURA (El enlace de tu Google Sheet que ya tenías)
-url_lectura = "Phttps://docs.google.com/spreadsheets/d/1JxwvTCr-a0W5wt-Pd2lj19ViefsFf1V2NKu5cif_2vE/edit?usp=sharing"
-
-# Llave de ESCRITURA (La URL de Apps Script que acabas de copiar)
+url_lectura = "https://docs.google.com/spreadsheets/d/1JxwvTCr-a0W5wt-Pd2lj19ViefsFf1V2NKu5cif_2vE/edit?usp=sharing"
 url_escritura = "https://script.google.com/macros/s/AKfycbwgA21rNvO0DxNXtDKnAxcN4ux0IETNaAWwe0YR7SO-eKE0VP-S9nF_7RMX3Nu6vW--/exec"
 
 @st.cache_data(ttl=60)
@@ -33,7 +30,7 @@ try:
     df_personal = cargar_datos("Matriz_Personal")
     df_bom = cargar_datos("BOM_Insumos")
     
-    # --- MENÚ LATERAL (RBAC) ---
+    # --- MENÚ LATERAL (RBAC - Control de Accesos) ---
     st.sidebar.header("👤 Panel de Usuario")
     rol = st.sidebar.selectbox("Seleccione su Nivel de Acceso:", [
         "Nivel 1: Línea / Gemba", 
@@ -47,11 +44,11 @@ try:
     st.subheader("🌐 Indicadores Globales de Planta (Turno Actual)")
     
     total_plantilla = len(df_personal)
-    ausentes = len(df_personal[df_personal['Estado_Asistencia'].str.lower() == 'ausente'])
+    ausentes = len(df_personal[df_personal['Estado_Asistencia'].str.lower() == 'ausente']) if 'Estado_Asistencia' in df_personal.columns else 0
     ausentismo_pct = (ausentes / total_plantilla * 100) if total_plantilla > 0 else 0
     
-    prod_total_global = df_plan["Produccion_Real"].sum()
-    meta_total_global = df_plan["Meta_Hora"].sum()
+    prod_total_global = df_plan["Produccion_Real"].sum() if "Produccion_Real" in df_plan.columns else 0
+    meta_total_global = df_plan["Meta_Hora"].sum() if "Meta_Hora" in df_plan.columns else 0
     eficiencia_global = (prod_total_global / meta_total_global * 100) if meta_total_global > 0 else 0
 
     col_prod, col_efi, col_aus, col_alerta = st.columns(4)
@@ -63,14 +60,16 @@ try:
         st.metric("Ausentismo Diario", f"{ausentismo_pct:.1f}%", delta="Límite: 5%", delta_color="inverse")
     with col_alerta:
         if ausentismo_pct > 5:
-            st.error("⚠ ALERTA: Ausentismo > 5%. Requiere rebalanceo (ILUO).")
+            st.error("⚠️ ALERTA: Ausentismo > 5%. Requiere rebalanceo (ILUO).")
+            with st.expander("Ver Matriz ILUO"):
+                st.dataframe(df_personal[df_personal['Estado_Asistencia'].str.lower() == 'presente'], hide_index=True)
         else:
             st.success("✅ Plantilla Estable.")
 
     st.markdown("---")
 
     # ==========================================
-    # MÓDULO 2 - PITCH CHARTS 
+    # MÓDULO 2 - PITCH CHARTS (Hora a Hora)
     # ==========================================
     def renderizar_linea(nombre_proceso, icono):
         st.markdown(f"### {icono} Línea de {nombre_proceso}")
@@ -93,15 +92,14 @@ try:
     with tabs[3]: renderizar_linea("Pantalones", "👖")
     with tabs[4]: renderizar_linea("Empaque", "📦")
 
-# ==========================================
-    # MÓDULO 6 - ANDON LOG (ACTUALIZADO CON "OTROS")
+    # ==========================================
+    # MÓDULO 6 - ANDON LOG (Escritura en Google Sheets)
     # ==========================================
     st.markdown("---")
     st.subheader("🛑 Módulo 6: Registro de Paradas (Andon Log)")
     col_causa, col_tiempo, col_linea, col_btn = st.columns([2, 1, 1, 1])
     
     with col_causa: 
-        # Se añade "Otros / Evento Externo" a la lista de opciones obligatorias
         causa = st.selectbox("Clasificación de Causa", [
             "Falla de Equipos", 
             "Falta de Materiales", 
@@ -119,28 +117,26 @@ try:
         if st.button("Registrar Parada", type="primary"):
             with st.spinner("Enviando a Google Sheets..."):
                 fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M")
-                
                 paquete_datos = {
                     "hoja": "Matriz_Kaizen",
                     "datos": [fecha_actual, linea, causa, tiempo, "Pendiente"]
                 }
-                
                 try:
                     respuesta = requests.post(url_escritura, json=paquete_datos, allow_redirects=True)
                     if respuesta.status_code == 200:
                         resultado = respuesta.json()
                         if "error" in resultado:
-                            st.error(f"❌ Google rechazó la escritura. Motivo: {resultado['error']}")
+                            st.error(f"❌ Google rechazó la escritura: {resultado['error']}")
                         else:
-                            st.success(f"✅ ¡Parada registrada en la base de datos!")
+                            st.success("✅ ¡Parada registrada en la base de datos!")
                             st.cache_data.clear()
                     else:
                         st.error(f"❌ Falla de comunicación. Código HTTP: {respuesta.status_code}")
                 except Exception as e:
-                    st.error(f"Falla de conexión del sistema: {e}")
+                    st.error(f"Falla de conexión: {e}")
 
     # ==========================================
-    # VISTAS NIVEL 2 y 3 (Almacén y Gerencia)
+    # VISTAS NIVEL 2 y 3 (Almacén y Suministro)
     # ==========================================
     if "Nivel 2" in rol or "Nivel 3" in rol:
         st.markdown("---")
@@ -148,11 +144,16 @@ try:
         def color_kanban(val): return 'background-color: #f8d7da' if val <= 40 else ('background-color: #fff3cd' if val <= 60 else 'background-color: #d4edda')
         st.dataframe(df_stock.style.map(color_kanban, subset=['Cantidad_Disponible']), use_container_width=True, hide_index=True)
 
-        st.markdown("---")
-        st.subheader("🚨 Módulo 7: Panel de Alertas Kaizen (Resolución TBP)")
-        def color_kaizen(val): return 'background-color: #d4edda; color: #155724' if val == 'Ejecutada' else 'background-color: #f8d7da; color: #721c24'
-        st.dataframe(df_kaizen.style.map(color_kaizen, subset=['Estado_Definitiva']), use_container_width=True, hide_index=True)
+        st.markdown("### ⚙️ Módulo 5: Proyección de Consumo (Explosión BOM)")
+        plan_activo = df_plan[df_plan['Meta_Hora'] > 0]
+        explosion = pd.merge(plan_activo, df_bom, on="Codigo_Prenda", how="inner")
+        explosion["Consumo_Total"] = explosion["Meta_Hora"] * explosion["Consumo_Estandar"]
+        resumen_bom = explosion.groupby(["Codigo_Insumo", "Descripcion_Insumo", "Unidad_Medida"])["Consumo_Total"].sum().reset_index()
+        st.dataframe(resumen_bom, use_container_width=True, hide_index=True)
 
+    # ==========================================
+    # VISUALIZACIÓN NIVEL 3 (Gerencia, Ingeniería y 5W2H)
+    # ==========================================
     if "Nivel 3" in rol:
         st.markdown("---")
         st.subheader("📅 Plan Maestro de Producción (Heijunka)")
@@ -176,10 +177,57 @@ try:
         with col_graf2:
             st.write("**Pareto de Tiempo Perdido por Causa Raíz (Minutos)**")
             datos_pareto = pd.DataFrame({
-                "Causa_Raiz": ["Falla Equipos", "Falta Material", "Ausentismo", "Defecto Calidad", "Falta Energía"],
-                "Minutos_Perdidos": [120, 85, 45, 30, 10]
+                "Causa_Raiz": ["Falla Equipos", "Falta Material", "Ausentismo", "Defecto Calidad", "Falta Energía", "Otros / Externo"],
+                "Minutos_Perdidos": [120, 85, 45, 30, 10, 15]
             })
             st.bar_chart(datos_pareto.set_index("Causa_Raiz"), color="#1F4E78")
+
+        # MÓDULO 7: PLAN 5W2H
+        st.markdown("---")
+        st.subheader("🛠️ Módulo 7: Despliegue de Contramedidas (Metodología 5W2H)")
+        st.info("Estructure el plan de acción correctiva para las incidencias registradas en el Andon Log.")
+        
+        with st.form("form_5w2h"):
+            st.write("### Estructura del Plan de Acción (5W2H)")
+            col_w1, col_w2 = st.columns(2)
+            
+            with col_w1:
+                what = st.text_input("1. What (¿Qué acción correctiva se hará?)")
+                why = st.text_input("2. Why (¿Por qué se implementa esta contramedida?)")
+                where = st.text_input("3. Where (¿Dónde se aplicará en planta?)")
+                when = st.date_input("4. When (¿Cuándo es la fecha límite de ejecución?)")
+            
+            with col_w2:
+                who = st.text_input("5. Who (¿Quién es el responsable directo?)")
+                how = st.text_input("6. How (¿Cómo se ejecutará el procedimiento?)")
+                how_much = st.text_input("7. How Much (¿Cuál es el costo estimado / recursos?)")
+            
+            btn_guardar_kaizen = st.form_submit_button("💾 Guardar Contramedida Definitiva y Cerrar Alerta", type="primary")
+            
+            if btn_guardar_kaizen:
+                with st.spinner("Actualizando Matriz Kaizen en la nube..."):
+                    fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M")
+                    paquete_kaizen = {
+                        "hoja": "Matriz_Kaizen",
+                        "datos": [fecha_actual, "Acción 5W2H", what, f"Resp: {who} | Costo: {how_much}", "Ejecutada"]
+                    }
+                    try:
+                        respuesta_k = requests.post(url_escritura, json=paquete_kaizen, allow_redirects=True)
+                        if respuesta_k.status_code == 200:
+                            st.success("✅ ¡Plan de acción 5W2H registrado y sincronizado con éxito!")
+                            st.cache_data.clear()
+                        else:
+                            st.error("❌ Error al sincronizar la contramedida con Google Sheets.")
+                    except Exception as e:
+                        st.error(f"Falla de conexión: {e}")
+
+        st.markdown("#### Historial y Estado de la Matriz Kaizen")
+        def color_kaizen(val): 
+            return 'background-color: #d4edda; color: #155724' if str(val).lower() == 'ejecutada' else 'background-color: #f8d7da; color: #721c24'
+        if 'Estado_Definitiva' in df_kaizen.columns:
+            st.dataframe(df_kaizen.style.map(color_kaizen, subset=['Estado_Definitiva']), use_container_width=True, hide_index=True)
+        else:
+            st.dataframe(df_kaizen, use_container_width=True, hide_index=True)
 
 except Exception as e:
     st.error("❌ Error de lectura. Revisa el enlace de Google Sheets.")
