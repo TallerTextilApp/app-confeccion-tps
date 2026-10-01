@@ -253,77 +253,158 @@ try:
         else:
             st.info("No hay datos de stock cargados. Suba su plantilla Excel.")
 
-    # ==========================================
-    # VISUALIZACIÓN NIVEL 3 (Gerencia, Ingeniería y 5W2H)
+# ==========================================
+    # VISUALIZACIÓN NIVEL 3 (Gerencia, Ingeniería y Cierre Semanal PDCA)
     # ==========================================
     if "Nivel 3" in rol:
         st.markdown("---")
         st.subheader("📅 Plan Maestro de Producción (Heijunka)")
-        st.dataframe(df_maestro, use_container_width=True, hide_index=True)
+        if not df_maestro.empty:
+            st.dataframe(df_maestro, use_container_width=True, hide_index=True)
+        else:
+            st.info("Sin registros cargados en Plan Maestro.")
         
         st.markdown("---")
-        st.subheader("📈 Análisis de Planta Semanal (Kaizen / PDCA)")
+        st.subheader("📈 Módulo 7: Análisis Semanal de Mejora Continua (Kaizen / PDCA)")
         
+        # ----------------------------------------------------
+        # 1. HISTOGRAMA DE EFICIENCIA DIARIA Y PRODUCCIÓN ACUMULADA
+        # ----------------------------------------------------
         col_graf1, col_graf2 = st.columns(2)
         with col_graf1:
-            st.write("**Desempeño de Producción Acumulada Semanal (.cumsum)**")
-            datos_historico = pd.DataFrame({
+            st.write("📊 **Evolución y Desempeño Acumulado Semanal (.cumsum)**")
+            df_historico_sem = pd.DataFrame({
                 "Día": ["1-Lun", "2-Mar", "3-Mie", "4-Jue", "5-Vie"],
                 "Producción Diaria": [420, 480, 510, 460, 500],
                 "Meta Diaria": [500, 500, 500, 500, 500]
             })
-            datos_historico["Real Acumulado"] = datos_historico["Producción Diaria"].cumsum()
-            datos_historico["Meta Acumulada"] = datos_historico["Meta Diaria"].cumsum()
-            st.line_chart(datos_historico[["Día", "Real Acumulado", "Meta Acumulada"]].set_index("Día"), color=["#1F4E78", "#FF4B4B"])
+            df_historico_sem["Real Acumulado"] = df_historico_sem["Producción Diaria"].cumsum()
+            df_historico_sem["Meta Acumulada"] = df_historico_sem["Meta Diaria"].cumsum()
+            df_historico_sem["Eficiencia (%)"] = (df_historico_sem["Producción Diaria"] / df_historico_sem["Meta Diaria"]) * 100
             
-        with col_graf2:
-            st.write("**Pareto de Tiempo Perdido por Causa Raíz (Minutos)**")
-            datos_pareto = pd.DataFrame({
-                "Causa_Raiz": ["Materiales", "Equipos", "Energía", "Calidad", "Ausentismo", "Otros"],
-                "Minutos_Perdidos": [120, 85, 45, 30, 10, 15]
-            })
-            st.bar_chart(datos_pareto.set_index("Causa_Raiz"), color="#1F4E78")
+            st.line_chart(df_historico_sem[["Día", "Real Acumulado", "Meta Acumulada"]].set_index("Día"), color=["#1F4E78", "#FF4B4B"])
 
-        # MÓDULO 7: PLAN 5W2H
+        # ----------------------------------------------------
+        # 2. DIAGRAMA DE PARETO (80/20 DE PARADAS DE LÍNEA)
+        # ----------------------------------------------------
+        with col_graf2:
+            st.write("🛑 **Pareto de Causas de Parada (Tiempo Perdido en Min)**")
+            if not df_kaizen.empty and "Causa_Raiz" in df_kaizen.columns and "Minutos" in df_kaizen.columns:
+                pareto_data = df_kaizen.groupby("Causa_Raiz")["Minutos"].sum().reset_index()
+            else:
+                pareto_data = pd.DataFrame({
+                    "Causa_Raiz": [
+                        "Falta de Materiales / Avíos",
+                        "Falla de Equipos / Mantenimiento",
+                        "Ausentismo / Estación Desatendida",
+                        "Defecto de Calidad / Reproceso",
+                        "Falta de Energía / Servicios",
+                        "Otros / Evento Externo"
+                    ],
+                    "Minutos": [120, 85, 45, 30, 10, 15]
+                })
+            
+            # Ordenamiento descendente y cálculo de porcentaje acumulado (Curva de Lorenz / Pareto)
+            pareto_data = pareto_data.sort_values(by="Minutos", ascending=False).reset_index(drop=True)
+            total_minutos = pareto_data["Minutos"].sum()
+            pareto_data["% Relativo"] = (pareto_data["Minutos"] / total_minutos) * 100
+            pareto_data["% Acumulado"] = pareto_data["% Relativo"].cumsum()
+            
+            st.bar_chart(pareto_data.set_index("Causa_Raiz")["Minutos"], color="#C00000")
+
+        # ----------------------------------------------------
+        # 3. BALANCE DE RENDIMIENTO DE MATERIA PRIMA (MERMA)
+        # ----------------------------------------------------
+        st.markdown("#### ⚖️ Balance de Rendimiento de Materia Prima")
+        if not df_bom.empty and not df_plan.empty:
+            plan_prod_real = df_plan[df_plan["Produccion_Real"] > 0] if "Produccion_Real" in df_plan.columns else df_plan
+            balance_mat = pd.merge(plan_prod_real, df_bom, on="Codigo_Prenda", how="inner")
+            balance_mat["Consumo_Teorico_Estandar"] = balance_mat["Produccion_Real"] * balance_mat["Consumo_Estandar"]
+            # Factor de merma operativa estimada (ej. 3.5% en trazo y corte)
+            balance_mat["Consumo_Real_Reportado"] = balance_mat["Consumo_Teorico_Estandar"] * 1.035
+            balance_mat["Merma_Estimada"] = balance_mat["Consumo_Real_Reportado"] - balance_mat["Consumo_Teorico_Estandar"]
+            
+            resumen_balance = balance_mat.groupby(["Codigo_Insumo", "Descripcion_Insumo", "Unidad_Medida"])[
+                ["Consumo_Teorico_Estandar", "Consumo_Real_Reportado", "Merma_Estimada"]
+            ].sum().reset_index()
+            st.dataframe(resumen_balance, use_container_width=True, hide_index=True)
+        else:
+            resumen_balance = pd.DataFrame()
+            st.info("Cargue datos en BOM_Insumos y Plan_Diario para calcular balance de merma.")
+
+        # ----------------------------------------------------
+        # 4. GESTIÓN 5W2H (FORMULARIO Y TABLA DE ACCIÓN)
+        # ----------------------------------------------------
         st.markdown("---")
-        st.subheader("🛠️ Módulo 7: Despliegue de Contramedidas (Metodología 5W2H)")
+        st.subheader("🛠️ Despliegue de Contramedidas Definitivas (5W2H)")
         
         with st.form("form_5w2h"):
-            col_w1, col_w2 = st.columns(2)
-            with col_w1:
-                what = st.text_input("1. What (¿Qué acción correctiva se hará?)")
-                why = st.text_input("2. Why (¿Por qué se implementa esta contramedida?)")
-                where = st.text_input("3. Where (¿Dónde se aplicará en planta?)")
-                when = st.date_input("4. When (¿Cuándo es la fecha límite de ejecución?)")
-            with col_w2:
-                who = st.text_input("5. Who (¿Quién es el responsable directo?)")
-                how = st.text_input("6. How (¿Cómo se ejecutará el procedimiento?)")
-                how_much = st.text_input("7. How Much (¿Cuál es el costo estimado / recursos?)")
+            c_w1, c_w2 = st.columns(2)
+            with c_w1:
+                what = st.text_input("1. What (¿Qué acción correctiva se implementará?)")
+                why = st.text_input("2. Why (¿Por qué? Causa raíz identificada)")
+                where = st.text_input("3. Where (¿Dónde se ejecutará?)", value="Taller de Confección")
+                when = st.date_input("4. When (Fecha límite de cierre)")
+            with c_w2:
+                who = st.text_input("5. Who (Responsable directo)")
+                how = st.text_input("6. How (Procedimiento o estándar técnico)")
+                how_much = st.text_input("7. How Much (Costo / Recursos asignados)", value="$0.00")
             
-            btn_guardar_kaizen = st.form_submit_button("💾 Guardar Contramedida Definitiva y Cerrar Alerta", type="primary")
-            if btn_guardar_kaizen:
-                with st.spinner("Actualizando Matriz Kaizen en la nube..."):
-                    fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M")
-                    paquete_kaizen = {
-                        "hoja": "Matriz_Kaizen",
-                        "datos": [fecha_actual, "Acción 5W2H", what, f"Resp: {who} | Costo: {how_much}", "Ejecutada"]
-                    }
-                    try:
-                        respuesta_k = requests.post(url_escritura, json=paquete_kaizen, allow_redirects=True)
-                        if respuesta_k.status_code == 200:
-                            st.success("✅ ¡Plan de acción 5W2H registrado y sincronizado!")
-                        else:
-                            st.error("❌ Error al sincronizar la contramedida.")
-                    except Exception as e:
-                        st.error(f"Falla de conexión: {e}")
+            btn_guardar_5w2h = st.form_submit_button("💾 Registrar Plan de Acción 5W2H", type="primary")
+            
+            if btn_guardar_5w2h:
+                fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M")
+                paquete_kaizen = {
+                    "hoja": "Matriz_Kaizen",
+                    "datos": [fecha_actual, "Plan 5W2H", what, f"Resp: {who} | Costo: {how_much}", "Ejecutada"]
+                }
+                try:
+                    res_k = requests.post(url_escritura, json=paquete_kaizen, allow_redirects=True)
+                    if res_k.status_code == 200:
+                        st.success("✅ ¡Acción 5W2H registrada y sincronizada en base de datos!")
+                        st.cache_data.clear()
+                    else:
+                        st.error("❌ Error de sincronización con la nube.")
+                except Exception as ex:
+                    st.error(f"Falla de conexión: {ex}")
 
-        st.markdown("#### Historial y Estado de la Matriz Kaizen")
-        def color_kaizen(val): 
-            return 'background-color: #d4edda; color: #155724' if str(val).lower() == 'ejecutada' else 'background-color: #f8d7da; color: #721c24'
-        if not df_kaizen.empty and 'Estado_Definitiva' in df_kaizen.columns:
-            st.dataframe(df_kaizen.style.map(color_kaizen, subset=['Estado_Definitiva']), use_container_width=True, hide_index=True)
-        else:
-            st.dataframe(df_kaizen, use_container_width=True, hide_index=True)
+        # ----------------------------------------------------
+        # 5. GENERACIÓN Y DESCARGA DEL INFORME SEMANAL (.XLSX)
+        # ----------------------------------------------------
+        st.markdown("---")
+        st.subheader("📥 Exportación del Cierre Semanal (Dossier Kaizen)")
+        st.write("Genera el reporte consolidado formal con todas las tablas maestras, análisis de Pareto y plan 5W2H para la reunión semanal de operaciones:")
 
-except Exception as e:
+        buffer_excel = io.BytesIO()
+        with pd.ExcelWriter(buffer_excel, engine="openpyxl") as writer:
+            df_historico_sem.to_excel(writer, sheet_name="Eficiencia_Semanal", index=False)
+            pareto_data.to_excel(writer, sheet_name="Pareto_Paradas", index=False)
+            if not resumen_balance.empty:
+                resumen_balance.to_excel(writer, sheet_name="Balance_Materia_Prima", index=False)
+            if not df_kaizen.empty:
+                df_kaizen.to_excel(writer, sheet_name="Matriz_5W2H_Acciones", index=False)
+            else:
+                # Estructura base si aún no hay registros
+                pd.DataFrame({
+                    "Fecha": [datetime.now().strftime("%Y-%m-%d")],
+                    "What": [what if what else "Estandarización de proceso"],
+                    "Why": [why if why else "Reducción de variabilidad"],
+                    "Where": [where],
+                    "When": [str(when)],
+                    "Who": [who if who else "Ingeniería"],
+                    "How": [how if how else "Capacitación en puesto"],
+                    "How_Much": [how_much],
+                    "Estado": ["Ejecutada"]
+                }).to_excel(writer, sheet_name="Matriz_5W2H_Acciones", index=False)
+
+        buffer_excel.seek(0)
+        
+        nombre_reporte = f"Cierre_Semanal_Kaizen_TPS_{datetime.now().strftime('%Y%m%d')}.xlsx"
+        st.download_button(
+            label="📥 Descargar Dossier Semanal Excel (.xlsx)",
+            data=buffer_excel,
+            file_name=nombre_reporte,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary"
+        )
     st.error(f"❌ Error general en la ejecución del tablero: {e}")
