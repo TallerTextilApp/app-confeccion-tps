@@ -8,58 +8,118 @@ import io
 st.set_page_config(page_title="Sistema TPS - Confección", layout="wide")
 
 # ==========================================
-# 1. PARÁMETROS Y CONEXIONES BASE
-# ==========================================
-url_lectura = "https://docs.google.com/spreadsheets/d/1JxwvTCr-a0W5wt-Pd2lj19ViefsFf1V2NKu5cif_2vE/edit?usp=sharing"
-url_escritura = "https://script.google.com/macros/s/AKfycbwgA21rNvO0DxNXtDKnAxcN4ux0IETNaAWwe0YR7SO-eKE0VP-S9nF_7RMX3Nu6vW--/exec"
-
-st.title("🏭 Tablero de Control de Planta (TPS - Confección)")
-st.markdown("---")
-
-# ==========================================
-# MÓDULO 1: CARGA MASIVA E INTEGRACIÓN CON EXCEL (PC DATA LOADER)
+# MÓDULO 1: CARGA MASIVA, VALIDACIÓN POKA-YOKE Y VISTA PREVIA
 # ==========================================
 st.sidebar.header("📁 Carga de Datos Maestra (Excel)")
 archivo_subido = st.sidebar.file_uploader("Subir Plantilla Maestro (.xlsx)", type=["xlsx"])
 
-# Estructuras base por defecto
-df_bom = pd.DataFrame(columns=["Codigo_Prenda", "Codigo_Insumo", "Descripcion_Insumo", "Consumo_Estandar", "Unidad_Medida"])
-df_stock = pd.DataFrame(columns=["Codigo_Insumo", "Descripcion_Insumo", "Cantidad_Disponible", "Punto_Reorden", "Unidad_Medida"])
-df_plan = pd.DataFrame(columns=["Hora_Inicio", "Hora_Fin", "Proceso", "Codigo_Prenda", "Meta_Hora", "Produccion_Real", "Parada_Activa", "Takt_Time_Objetivo"])
-df_personal = pd.DataFrame(columns=["Nombre_Operador", "Maquina_Asignada", "Nivel_Polivalencia", "Estado_Asistencia"])
-df_maestro = pd.DataFrame(columns=["ID_Lote", "Mes_Objetivo", "Semana_Objetivo", "Codigo_Prenda", "Meta_Mensual"])
-df_kaizen = pd.DataFrame(columns=["Fecha", "Proceso", "Causa_Raiz", "Minutos", "Estado_Definitiva"])
+# Inicializar estados en sesión si no existen
+if "datos_validados_activos" not in st.session_state:
+    st.session_state.datos_validados_activos = False
+    st.session_state.df_bom = pd.DataFrame(columns=["Codigo_Prenda", "Codigo_Insumo", "Descripcion_Insumo", "Consumo_Estandar", "Unidad_Medida"])
+    st.session_state.df_stock = pd.DataFrame(columns=["Codigo_Insumo", "Descripcion_Insumo", "Cantidad_Disponible", "Punto_Reorden", "Unidad_Medida"])
+    st.session_state.df_plan = pd.DataFrame(columns=["Hora_Inicio", "Hora_Fin", "Proceso", "Codigo_Prenda", "Meta_Hora", "Produccion_Real", "Parada_Activa", "Takt_Time_Objetivo"])
+    st.session_state.df_personal = pd.DataFrame(columns=["Nombre_Operador", "Maquina_Asignada", "Nivel_Polivalencia", "Estado_Asistencia"])
+    st.session_state.df_maestro = pd.DataFrame(columns=["ID_Lote", "Mes_Objetivo", "Semana_Objetivo", "Codigo_Prenda", "Meta_Mensual"])
+    st.session_state.df_kaizen = pd.DataFrame(columns=["Fecha", "Proceso", "Causa_Raiz", "Minutos", "Estado_Definitiva"])
+
+# Definición de esquema obligatorio por hoja
+ESQUEMA_REQUERIDO = {
+    "BOM_Insumos": ["Codigo_Prenda", "Codigo_Insumo", "Consumo_Estandar", "Unidad_Medida"],
+    "Stock_Inicial": ["Codigo_Insumo", "Cantidad_Disponible", "Punto_Reorden"],
+    "Plan_Diario": ["Proceso", "Codigo_Prenda", "Meta_Hora"],
+    "Matriz_Personal": ["Nombre_Operador", "Estado_Asistencia"]
+}
 
 if archivo_subido is not None:
     try:
         xls = pd.ExcelFile(archivo_subido)
-        # Lectura y validación de hojas obligatorias según PRD
-        if "BOM_Insumos" in xls.sheet_names: 
-            df_bom = pd.read_excel(xls, "BOM_Insumos").dropna(how="all")
-        if "Stock_Inicial" in xls.sheet_names: 
-            df_stock = pd.read_excel(xls, "Stock_Inicial").dropna(how="all")
-        if "Plan_Diario" in xls.sheet_names: 
-            df_plan = pd.read_excel(xls, "Plan_Diario").dropna(how="all")
-        if "Matriz_Personal" in xls.sheet_names: 
-            df_personal = pd.read_excel(xls, "Matriz_Personal").dropna(how="all")
-        if "Plan_Maestro" in xls.sheet_names: 
-            df_maestro = pd.read_excel(xls, "Plan_Maestro").dropna(how="all")
-        if "Matriz_Kaizen" in xls.sheet_names: 
-            df_kaizen = pd.read_excel(xls, "Matriz_Kaizen").dropna(how="all")
+        hojas_archivo = xls.sheet_names
         
-        st.sidebar.success("✅ ¡Plantilla Excel cargada y validada!")
+        errores_validacion = []
+        advertencias_validacion = []
+        tablas_temporales = {}
+
+        # 1. Validación de existencia de Hojas Maestras
+        for hoja, columnas_requeridas in ESQUEMA_REQUERIDO.items():
+            if hoja not in hojas_archivo:
+                errores_validacion.append(f"Falta la hoja obligatoria: **{hoja}**")
+            else:
+                df_temp = pd.read_excel(xls, hoja).dropna(how="all")
+                
+                # 2. Validación de columnas mandatorias
+                columnas_faltantes = [col for col in columnas_requeridas if col not in df_temp.columns]
+                if columnas_faltantes:
+                    errores_validacion.append(f"Hoja '{hoja}' carece de las columnas: `{', '.join(columnas_faltantes)}`")
+                else:
+                    tablas_temporales[hoja] = df_temp
+
+        # Si supera esquema estructural, auditar tipos de datos e integridad
+        if not errores_validacion:
+            df_bom_temp = tablas_temporales["BOM_Insumos"]
+            df_stock_temp = tablas_temporales["Stock_Inicial"]
+            df_plan_temp = tablas_temporales["Plan_Diario"]
+            df_pers_temp = tablas_temporales["Matriz_Personal"]
+
+            # Validación de filas vacías críticas
+            if df_plan_temp["Codigo_Prenda"].isnull().any():
+                advertencias_validacion.append("Plan_Diario contiene filas con 'Codigo_Prenda' vacío. Se filtrarán automáticamente.")
+                df_plan_temp = df_plan_temp.dropna(subset=["Codigo_Prenda"])
+
+            # Integridad cruzada (Prendas en Plan Diario deben estar en BOM)
+            prendas_plan = set(df_plan_temp["Codigo_Prenda"].dropna().astype(str).unique())
+            prendas_bom = set(df_bom_temp["Codigo_Prenda"].dropna().astype(str).unique())
+            prendas_huerfanas = prendas_plan - prendas_bom
+            if prendas_huerfanas:
+                advertencias_validacion.append(f"Modelos en Plan sin receta en BOM: `{', '.join(prendas_huerfanas)}` (No calcularán consumo automático).")
+
+            # Validación de valores numéricos coherentes
+            df_stock_temp["Cantidad_Disponible"] = pd.to_numeric(df_stock_temp["Cantidad_Disponible"], errors="coerce").fillna(0)
+            df_stock_temp["Punto_Reorden"] = pd.to_numeric(df_stock_temp["Punto_Reorden"], errors="coerce").fillna(40)
+            df_plan_temp["Meta_Hora"] = pd.to_numeric(df_plan_temp["Meta_Hora"], errors="coerce").fillna(0)
+            df_bom_temp["Consumo_Estandar"] = pd.to_numeric(df_bom_temp["Consumo_Estandar"], errors="coerce").fillna(0)
+
+            # Carga opcional de hojas complementarias
+            df_maestro_temp = pd.read_excel(xls, "Plan_Maestro").dropna(how="all") if "Plan_Maestro" in hojas_archivo else pd.DataFrame()
+            df_kaizen_temp = pd.read_excel(xls, "Matriz_Kaizen").dropna(how="all") if "Matriz_Kaizen" in hojas_archivo else pd.DataFrame()
+
+            # Despliegue de Control Visual Poka-Yoke en la Barra Lateral
+            st.sidebar.success("📋 Validación estructural: APROBADA")
+            for adv in advertencias_validacion:
+                st.sidebar.warning(f"⚠️ {adv}")
+
+            # Cuadro expandible de Confirmación previa
+            with st.sidebar.expander("🔍 Vista Previa y Confirmación", expanded=True):
+                st.caption(f"• BOM: {len(df_bom_temp)} recetas registradas")
+                st.caption(f"• Stock: {len(df_stock_temp)} insumos identificados")
+                st.caption(f"• Plan: {len(df_plan_temp)} bloques horarios")
+                st.caption(f"• Personal: {len(df_pers_temp)} operarios censados")
+                
+                if st.button("✅ Aplicar y Sincronizar Datos", type="primary", use_container_width=True):
+                    st.session_state.df_bom = df_bom_temp
+                    st.session_state.df_stock = df_stock_temp
+                    st.session_state.df_plan = df_plan_temp
+                    st.session_state.df_personal = df_pers_temp
+                    st.session_state.df_maestro = df_maestro_temp
+                    st.session_state.df_kaizen = df_kaizen_temp
+                    st.session_state.datos_validados_activos = True
+                    st.rerun()
+
+        else:
+            st.sidebar.error("❌ Archivo Rechazado (Jidoka / Error Estructural):")
+            for err in errores_validacion:
+                st.sidebar.markdown(f"- {err}")
+
     except Exception as e:
         st.sidebar.error(f"❌ Error al procesar el archivo Excel: {e}")
 
-try:
-    # --- MENÚ LATERAL: CONTROL DE ACCESO (RBAC) ---
-    st.sidebar.markdown("---")
-    st.sidebar.header("👤 Panel de Usuario")
-    rol = st.sidebar.selectbox("Seleccione su Nivel de Acceso:", [
-        "Nivel 1: Línea / Gemba", 
-        "Nivel 2: Almacén / Planificación", 
-        "Nivel 3: Gerencia / Ingeniería"
-    ])
+# Vinculación de DataFrames activos a las variables operativas
+df_bom = st.session_state.df_bom
+df_stock = st.session_state.df_stock
+df_plan = st.session_state.df_plan
+df_personal = st.session_state.df_personal
+df_maestro = st.session_state.df_maestro
+df_kaizen = st.session_state.df_kaizen
 
     # ==========================================
     # MÓDULOS 3 Y 4: INDICADORES GLOBALES (EFICIENCIA Y AUSENTISMO)
