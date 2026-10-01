@@ -253,7 +253,7 @@ try:
         else:
             st.info("No hay datos de stock cargados. Suba su plantilla Excel.")
 
-# ==========================================
+    # ==========================================
     # VISUALIZACIÓN NIVEL 3 (Gerencia, Ingeniería y Cierre Semanal PDCA)
     # ==========================================
     if "Nivel 3" in rol:
@@ -406,5 +406,4 @@ try:
             file_name=nombre_reporte,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             type="primary"
-        )
-    st.error(f"❌ Error general en la ejecución del tablero: {e}")
+        )tablero: {e}")
