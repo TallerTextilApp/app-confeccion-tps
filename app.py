@@ -93,41 +93,51 @@ try:
     with tabs[3]: renderizar_linea("Pantalones", "👖")
     with tabs[4]: renderizar_linea("Empaque", "📦")
 
-    # ==========================================
-    # MÓDULO 6 - ANDON LOG (AHORA CON ESCRITURA REAL)
+# ==========================================
+    # MÓDULO 6 - ANDON LOG (ACTUALIZADO CON "OTROS")
     # ==========================================
     st.markdown("---")
     st.subheader("🛑 Módulo 6: Registro de Paradas (Andon Log)")
     col_causa, col_tiempo, col_linea, col_btn = st.columns([2, 1, 1, 1])
     
-    with col_causa: causa = st.selectbox("Clasificación de Causa", ["Falla de Equipos", "Falta de Materiales", "Defecto de Calidad", "Falta de Energía", "Ausentismo"])
-    with col_tiempo: tiempo = st.number_input("Tiempo Perdido (Min)", min_value=1)
-    with col_linea: linea = st.selectbox("Proceso", ["Corte", "Previos", "Chamarras", "Pantalones", "Empaque"])
+    with col_causa: 
+        # Se añade "Otros / Evento Externo" a la lista de opciones obligatorias
+        causa = st.selectbox("Clasificación de Causa", [
+            "Falla de Equipos", 
+            "Falta de Materiales", 
+            "Defecto de Calidad", 
+            "Falta de Energía", 
+            "Ausentismo", 
+            "Otros / Evento Externo"
+        ])
+    with col_tiempo: 
+        tiempo = st.number_input("Tiempo Perdido (Min)", min_value=1)
+    with col_linea: 
+        linea = st.selectbox("Proceso", ["Corte", "Previos", "Chamarras", "Pantalones", "Empaque"])
     with col_btn:
         st.markdown("<br>", unsafe_allow_html=True)
-        # AL HACER CLIC EN EL BOTÓN:
         if st.button("Registrar Parada", type="primary"):
             with st.spinner("Enviando a Google Sheets..."):
-                # Capturamos la fecha y hora actual
                 fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M")
                 
-                # Preparamos el paquete de datos para la hoja "Matriz_Kaizen"
                 paquete_datos = {
                     "hoja": "Matriz_Kaizen",
                     "datos": [fecha_actual, linea, causa, tiempo, "Pendiente"]
                 }
                 
                 try:
-                    # Disparamos los datos hacia la URL de Apps Script
-                    respuesta = requests.post(url_escritura, json=paquete_datos)
+                    respuesta = requests.post(url_escritura, json=paquete_datos, allow_redirects=True)
                     if respuesta.status_code == 200:
-                        st.success(f"✅ ¡Parada registrada en la base de datos!")
-                        # Limpiamos la caché para que se actualice la tabla de abajo
-                        st.cache_data.clear()
+                        resultado = respuesta.json()
+                        if "error" in resultado:
+                            st.error(f"❌ Google rechazó la escritura. Motivo: {resultado['error']}")
+                        else:
+                            st.success(f"✅ ¡Parada registrada en la base de datos!")
+                            st.cache_data.clear()
                     else:
-                        st.error("Error al comunicarse con la base de datos.")
+                        st.error(f"❌ Falla de comunicación. Código HTTP: {respuesta.status_code}")
                 except Exception as e:
-                    st.error(f"Falla de conexión: {e}")
+                    st.error(f"Falla de conexión del sistema: {e}")
 
     # ==========================================
     # VISTAS NIVEL 2 y 3 (Almacén y Gerencia)
