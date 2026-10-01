@@ -54,35 +54,84 @@ try:
         "Nivel 3: Gerencia / Ingeniería"
     ])
 
-    # ==========================================
-    # MÓDULOS 3 Y 4 - INDICADORES GLOBALES (EFICIENCIA Y AUSENTISMO)
+# ==========================================
+    # MÓDULOS 3 Y 4 - INDICADORES GLOBALES (MOTOR REFINADO TPS)
     # ==========================================
     st.subheader("🌐 Indicadores Globales de Planta (Turno Actual)")
-    
-    total_plantilla = len(df_personal)
-    ausentes = len(df_personal[df_personal['Estado_Asistencia'].str.lower() == 'ausente']) if 'Estado_Asistencia' in df_personal.columns else 0
-    ausentismo_pct = (ausentes / total_plantilla * 100) if total_plantilla > 0 else 0
-    
-    prod_total_global = df_plan["Produccion_Real"].sum() if "Produccion_Real" in df_plan.columns else 0
-    meta_total_global = df_plan["Meta_Hora"].sum() if "Meta_Hora" in df_plan.columns else 0
-    
-    # Motor de Eficiencia TPS basado en tiempo ganado / disponible
-    eficiencia_global = (prod_total_global / meta_total_global * 100) if meta_total_global > 0 else 0
 
+    # 1. Parámetros de Tiempo y Producción
+    # Jornada estándar de 8 horas = 480 minutos brutos
+    TIEMPO_DISPONIBLE_TURNO_MIN = 480 
+
+    # Extracción de Producción Real
+    prod_total_global = pd.to_numeric(df_plan["Produccion_Real"], errors="coerce").fillna(0).sum() if "Produccion_Real" in df_plan.columns else 0
+    meta_total_global = pd.to_numeric(df_plan["Meta_Hora"], errors="coerce").fillna(0).sum() if "Meta_Hora" in df_plan.columns else 0
+
+    # Extracción de Takt Time Objetivo (min/unidad)
+    if "Takt_Time_Objetivo" in df_plan.columns:
+        # Si viene definido por fila o modelo en la plantilla
+        tt_serie = pd.to_numeric(df_plan["Takt_Time_Objetivo"], errors="coerce").dropna()
+        takt_time_min = tt_serie.iloc[0] if not tt_serie.empty else 4.8
+    else:
+        # Valor de contingencia según jornada estándar de 480 min para meta de 100 prendas
+        takt_time_min = (TIEMPO_DISPONIBLE_TURNO_MIN / meta_total_global) if meta_total_global > 0 else 4.8
+
+    # 2. Cálculo Exacto de Eficiencia TPS (Tiempo Estándar Ganado / Tiempo Disponible)
+    tiempo_ganado_min = prod_total_global * takt_time_min
+    eficiencia_global = (tiempo_ganado_min / TIEMPO_DISPONIBLE_TURNO_MIN * 100) if TIEMPO_DISPONIBLE_TURNO_MIN > 0 else 0
+
+    # 3. Control de Ausentismo Diario (Módulo 4)
+    total_plantilla = len(df_personal)
+    if "Estado_Asistencia" in df_personal.columns and total_plantilla > 0:
+        ausentes = len(df_personal[df_personal['Estado_Asistencia'].astype(str).str.strip().str.lower() == 'ausente'])
+        ausentismo_pct = (ausentes / total_plantilla) * 100
+    else:
+        ausentes = 0
+        ausentismo_pct = 0.0
+
+    # 4. Despliegue Visual (Mieruka Andon)
     col_prod, col_efi, col_aus, col_alerta = st.columns(4)
+
     with col_prod:
-        st.metric("Producción del Turno", f"{int(prod_total_global)} unid", delta=f"Meta: {int(meta_total_global)} unid", delta_color="off" if prod_total_global < meta_total_global else "normal")
+        st.metric(
+            label="Producción Física",
+            value=f"{int(prod_total_global)} unid",
+            delta=f"Meta: {int(meta_total_global)} unid",
+            delta_color="normal" if prod_total_global >= meta_total_global else "off"
+        )
+
     with col_efi:
-        st.metric("Eficiencia Global", f"{eficiencia_global:.1f}%", delta="Meta: 95%", delta_color="off" if eficiencia_global < 95 else "normal")
+        # Código de color Andon para la eficiencia: >=95% Verde, 85-94% Amarillo, <85% Rojo
+        delta_color_efi = "normal" if eficiencia_global >= 95 else ("off" if eficiencia_global < 85 else "inverse")
+        st.metric(
+            label="Eficiencia de Planta (TPS)",
+            value=f"{eficiencia_global:.1f}%",
+            delta=f"TT: {takt_time_min:.1f} min/u | Meta: ≥95%",
+            delta_color=delta_color_efi
+        )
+
     with col_aus:
-        st.metric("Ausentismo Diario", f"{ausentismo_pct:.1f}%", delta="Límite: 5%", delta_color="inverse")
+        st.metric(
+            label="Ausentismo Laboral",
+            value=f"{ausentismo_pct:.1f}%",
+            delta=f"{ausentes} de {total_plantilla} operarios",
+            delta_color="inverse" if ausentismo_pct > 5.0 else "normal"
+        )
+
     with col_alerta:
-        if ausentismo_pct > 5:
-            st.error("⚠️ ALERTA: Ausentismo > 5%. Requiere rebalanceo (Matriz ILUO).")
-            with st.expander("Ver Operadores Disponibles (ILUO)"):
-                st.dataframe(df_personal[df_personal['Estado_Asistencia'].str.lower() == 'presente'], hide_index=True)
+        if ausentismo_pct > 5.0:
+            st.error(f"⚠️ ANDON: Ausentismo crítico ({ausentismo_pct:.1f}% > 5%).")
+            with st.expander("Rebalancear Estaciones (Matriz ILUO)"):
+                if not df_personal.empty:
+                    st.dataframe(
+                        df_personal[df_personal['Estado_Asistencia'].astype(str).str.strip().str.lower() == 'presente'],
+                        hide_index=True,
+                        use_container_width=True
+                    )
+        elif eficiencia_global < 85.0 and prod_total_global > 0:
+            st.warning("⚠️ RITMO BAJO: Eficiencia por debajo del 85%. Verificar cuellos de botella.")
         else:
-            st.success("✅ Plantilla Estable.")
+            st.success("✅ Ritmo de Planta Balanceado.")
 
     st.markdown("---")
 
